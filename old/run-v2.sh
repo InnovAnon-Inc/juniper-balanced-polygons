@@ -4,5 +4,5 @@ set -euxo nounset -o pipefail
 (( ! $# ))
 [[ -n ${VIRTUAL_ENV:-} ]] ||
 . ~/venv/bin/activate
-#python app.py
+#python app-v2.py
 python -m juniper_polygons.app

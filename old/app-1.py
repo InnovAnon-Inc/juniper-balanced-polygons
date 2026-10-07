@@ -1,5 +1,6 @@
 import cmath
 import math
+import requests
 from flask import Flask, render_template_string, jsonify, request
 
 app = Flask(__name__)
@@ -62,7 +63,6 @@ def analyze_pattern(pattern: list[int], N: int) -> dict:
     balanced = is_strictly_balanced(pattern, N)
     regular = is_regular_polygon(pattern, N) if balanced else False
     
-    # Class 1 = Single regular polygon; Class 2 = Composite sum of regular polygons (both center at 0,0)
     class_type = "Class 1 (Regular)" if regular else ("Class 2 (Composite)" if balanced else "Unbalanced")
     
     return {
@@ -74,13 +74,11 @@ def analyze_pattern(pattern: list[int], N: int) -> dict:
     }
 
 def generate_rhythm_library(N: int) -> dict:
-    """Generates catalog of strictly balanced cyclotomic and Bjorklund rhythms."""
     cyclotomic = []
     bjorklund_rhythms = []
     seen_cyc = set()
     seen_bjork = set()
 
-    # 1. Bjorklund Euclidean Rhythms
     for k in range(1, N):
         pat = bjorklund(N, k)
         key = tuple(pat)
@@ -91,7 +89,6 @@ def generate_rhythm_library(N: int) -> dict:
             info["is_coprime"] = gcd(k, N) == 1
             bjorklund_rhythms.append(info)
 
-    # 2. Exhaustive Search for Strictly Balanced Cyclotomic Polygons
     total_combos = 1 << N
     step_size = max(1, total_combos // 4096)
     
@@ -111,7 +108,7 @@ def generate_rhythm_library(N: int) -> dict:
     }
 
 # ==============================================================================
-# FLASK ROUTES
+# EXTERNAL SERVER SYNC & FLASK ROUTES
 # ==============================================================================
 
 @app.route('/api/library', methods=['GET'])
@@ -120,6 +117,33 @@ def get_library():
     lib = generate_rhythm_library(n_steps)
     return jsonify({"n": n_steps, "library": lib})
 
+@app.route('/api/chimes_synesthesia', methods=['GET'])
+def get_chimes_synesthesia():
+    """Polls local synesthesia/chimes server or generates dynamic fallback pitch/color map."""
+    try:
+        res = requests.get('http://127.0.0.1:5001/chimes_state', timeout=1.0)
+        if res.status_code == 200 and res.json():
+            return jsonify(res.json())
+    except Exception:
+        pass
+
+    # Default Fallback Polychord (Cmaj7 / Am9 family) with mapped HSV colors
+    fallback_data = {
+        "inner_hand": {
+            "chord_name": "Cmaj7 (Default Polychord)",
+            "notes": ["C4", "E4", "G4", "B4", "D5", "F#5"],
+            "colors": [
+                {"r": 255, "g": 87,  "b": 34,  "quartertone_note": "C",  "quartertone_index": 5},
+                {"r": 255, "g": 193, "b": 7,   "quartertone_note": "E",  "quartertone_index": 13},
+                {"r": 76,  "g": 175, "b": 80,  "quartertone_note": "G",  "quartertone_index": 17},
+                {"r": 33,  "g": 150, "b": 243, "quartertone_note": "B",  "quartertone_index": 4},
+                {"r": 156, "g": 39,  "b": 176, "quartertone_note": "D",  "quartertone_index": 9},
+                {"r": 233, "g": 30,  "b": 99,  "quartertone_note": "F#", "quartertone_index": 16}
+            ]
+        }
+    }
+    return jsonify(fallback_data)
+
 @app.route('/api/evaluate_bitwise', methods=['POST'])
 def evaluate_bitwise():
     data = request.json
@@ -127,7 +151,6 @@ def evaluate_bitwise():
     negative_mask = data.get('negative_mask', [])
     N = len(positive_mask)
     
-    # Perform Bitwise Operation: Positive AND NOT Negative (P & ~N)
     result_pattern = [1 if (pos and not neg) else 0 for pos, neg in zip(positive_mask, negative_mask)]
     analysis = analyze_pattern(result_pattern, N)
     return jsonify(analysis)
@@ -188,7 +211,7 @@ HTML_TEMPLATE = """
             gap: 25px;
             flex-wrap: wrap;
             justify-content: center;
-            max-width: 1300px;
+            max-width: 1350px;
             width: 100%;
         }
         
@@ -207,7 +230,7 @@ HTML_TEMPLATE = """
             background: #1e1e24;
             padding: 15px;
             border-radius: 8px;
-            width: 380px;
+            width: 440px;
             display: flex;
             flex-direction: column;
             gap: 12px;
@@ -217,12 +240,12 @@ HTML_TEMPLATE = """
             background: #2a2a32;
             padding: 10px;
             border-radius: 6px;
-            border-left: 4px solid #00e676;
+            border-left: 6px solid #00e676;
             display: flex;
             flex-direction: column;
             gap: 8px;
         }
-        .stack-item.negative { border-left-color: #ff5252; }
+        .stack-item.negative { border-left-style: dashed; }
 
         .row { display: flex; justify-content: space-between; align-items: center; }
         .badge { font-size: 10px; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; font-weight: bold; }
@@ -241,31 +264,31 @@ HTML_TEMPLATE = """
 <body>
 
     <h1>Harmonic Cyclotomic & Euclidean Rhythm Engine</h1>
-    <p class="subtitle">A4 = 432 Hz Master Tuning | Strict Center of Mass Balance | Bitwise Logic (P & ~N)</p>
+    <p class="subtitle">Synesthesia Color Map | Chimes Polychord Integration | Multi-Ratio Subdivisions</p>
 
     <div class="top-bar">
         <label for="n-input">Pulses (N):</label>
         <input type="number" id="n-input" value="12" min="3" max="32" style="width: 60px;">
-        <button onclick="loadLibrary()">Update N</button>
+        <button id="update-n-btn">Update N</button>
 
         <label for="bpm-input">Master BPM:</label>
-        <input type="number" id="bpm-input" value="120" min="30" max="300" style="width: 65px;">
+        <input type="number" id="bpm-input" value="60" min="30" max="300" style="width: 65px;">
 
+        <button onclick="syncChimes()">Sync Chimes Polychord</button>
         <button id="play-btn" onclick="togglePlay()">Play Poly-Rhythm</button>
     </div>
 
     <div class="workspace">
-        <!-- Visualization Canvas -->
         <div class="canvas-card">
-            <canvas id="polyCanvas" width="420" height="420"></canvas>
-            <div class="status-box" id="bitwise-status" style="margin-top: 15px; width: 390px;">
+            <canvas id="polyCanvas" width="480" height="480"></canvas>
+            <div class="status-box" id="bitwise-status" style="margin-top: 15px; width: 450px;">
                 Evaluating combined bitwise pattern...
             </div>
         </div>
 
-        <!-- Dynamic Polygon Multi-Stack Control -->
         <div class="panel">
             <h3>Polygon Stacks & Harmonic Ratios</h3>
+            <div id="chord-info" style="font-size: 12px; color: #888;">Active Polychord: Syncing...</div>
             <div id="stacks-container"></div>
             <button onclick="addStack()">+ Add Polygon Stack</button>
         </div>
@@ -276,12 +299,27 @@ HTML_TEMPLATE = """
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         
         let rhythmLibrary = { cyclotomic: [], bjorklund: [] };
+        let activeChordData = [];
         let stacks = [];
         let isPlaying = false;
         let masterTimer = null;
-        let globalTick = 0;
+        let syncPollInterval = null;
 
-        function playTone(freq, isPositive) {
+        const HARMONIC_RATIOS = [
+            { label: "1/4 (Whole Note)", ratio: 0.25 },
+            { label: "1/2 (Half Note)", ratio: 0.5 },
+            { label: "1/1 (Quarter Note)", ratio: 1.0 },
+            { label: "3/2 (3-Tuplet)", ratio: 1.5 },
+            { label: "2/1 (8th Note)", ratio: 2.0 },
+            { label: "5/2 (5-Tuplet)", ratio: 2.5 },
+            { label: "3/1 (Triplet 8ths)", ratio: 3.0 },
+            { label: "7/2 (7-Tuplet)", ratio: 3.5 },
+            { label: "4/1 (16th Note)", ratio: 4.0 },
+            { label: "5/1 (5-Tuplet 16ths)", ratio: 5.0 },
+            { label: "8/1 (32nd Note)", ratio: 8.0 }
+        ];
+
+        function playTone(freq, rgbColor, isPositive) {
             if (audioCtx.state === 'suspended') audioCtx.resume();
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
@@ -291,12 +329,31 @@ HTML_TEMPLATE = """
             
             osc.frequency.setValueAtTime(actualFreq, audioCtx.currentTime);
             gain.gain.setValueAtTime(isPositive ? 0.35 : 0.15, audioCtx.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+            gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.18);
 
             osc.connect(gain);
             gain.connect(audioCtx.destination);
             osc.start();
-            osc.stop(audioCtx.currentTime + 0.15);
+            osc.stop(audioCtx.currentTime + 0.18);
+        }
+
+        async function syncChimes() {
+            try {
+                const res = await fetch('/api/chimes_synesthesia');
+                const data = await res.json();
+                if (data.inner_hand && data.inner_hand.colors) {
+                    activeChordData = data.inner_hand.colors.map((c, idx) => ({
+                        note: data.inner_hand.notes[idx] || `Tone ${idx+1}`,
+                        color: `rgb(${c.r}, ${c.g}, ${c.b})`,
+                        freq: A4_FREQ * Math.pow(2, ((c.quartertone_index || 0) - 9) / 12)
+                    }));
+                    document.getElementById('chord-info').innerText = `Active Polychord: ${data.inner_hand.chord_name || 'Custom'}`;
+                }
+            } catch(e) {
+                console.log("Using dynamic pitch fallback.");
+            }
+            renderStacks();
+            updateBitwiseResult();
         }
 
         async function loadLibrary() {
@@ -305,14 +362,14 @@ HTML_TEMPLATE = """
             const data = await res.json();
             rhythmLibrary = data.library;
 
-            // Reset stacks with initial Positive and Negative default layers
-            stacks = [
-                { type: 'positive', mode: 'cyclotomic', index: 0, rotation: 0, ratio: 1.0 },
-                { type: 'negative', mode: 'bjorklund', index: 0, rotation: 0, ratio: 1.0 }
-            ];
+            if (stacks.length === 0) {
+                stacks = [
+                    { type: 'positive', mode: 'cyclotomic', index: 0, rotation: 0, ratio: 1.0 },
+                    { type: 'negative', mode: 'bjorklund', index: 0, rotation: 0, ratio: 2.0 }
+                ];
+            }
             
-            renderStacks();
-            updateBitwiseResult();
+            await syncChimes();
         }
 
         function renderStacks() {
@@ -323,11 +380,19 @@ HTML_TEMPLATE = """
                 const el = document.createElement('div');
                 el.className = `stack-item ${stack.type}`;
                 
+                const toneInfo = activeChordData[idx % activeChordData.length] || { note: 'Tone', color: '#00e676' };
+                el.style.borderLeftColor = toneInfo.color;
+
                 const list = rhythmLibrary[stack.mode] || [];
                 let optionsHtml = list.map((item, i) => `<option value="${i}" ${i === stack.index ? 'selected' : ''}>${item.label}</option>`).join('');
+                
+                let ratioOptionsHtml = HARMONIC_RATIOS.map(r => 
+                    `<option value="${r.ratio}" ${r.ratio === stack.ratio ? 'selected' : ''}>${r.label}</option>`
+                ).join('');
 
                 el.innerHTML = `
                     <div class="row">
+                        <span style="font-weight:bold; color:${toneInfo.color}">Stack ${idx+1}: ${toneInfo.note}</span>
                         <select onchange="updateStack(${idx}, 'type', this.value)">
                             <option value="positive" ${stack.type === 'positive' ? 'selected' : ''}>+ POSITIVE</option>
                             <option value="negative" ${stack.type === 'negative' ? 'selected' : ''}>- NEGATIVE</option>
@@ -351,10 +416,7 @@ HTML_TEMPLATE = """
                         
                         <label>Ratio:</label>
                         <select onchange="updateStack(${idx}, 'ratio', parseFloat(this.value))">
-                            <option value="0.5" ${stack.ratio === 0.5 ? 'selected' : ''}>1/2 (8ths)</option>
-                            <option value="0.6666" ${stack.ratio === 0.6666 ? 'selected' : ''}>2/3 (Triplets)</option>
-                            <option value="1.0" ${stack.ratio === 1.0 ? 'selected' : ''}>1/1 (Base)</option>
-                            <option value="2.0" ${stack.ratio === 2.0 ? 'selected' : ''}>2/1 (16ths)</option>
+                            ${ratioOptionsHtml}
                         </select>
                     </div>
                 `;
@@ -441,56 +503,80 @@ HTML_TEMPLATE = """
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             const centerX = canvas.width / 2;
             const centerY = canvas.height / 2;
-            const radius = 160;
+            const baseRadius = 180;
 
-            // Base Circle
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-            ctx.strokeStyle = '#333';
-            ctx.lineWidth = 2;
-            ctx.stroke();
+            stacks.forEach((s, sIdx) => {
+                const subdivisions = Math.round(N * s.ratio);
+                const subRadius = baseRadius + (sIdx * 8);
+                
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, subRadius, 0, 2 * Math.PI);
+                ctx.strokeStyle = '#222';
+                ctx.stroke();
 
-            const getCoords = (i) => {
-                const angle = (2 * Math.PI * i / N) - (Math.PI / 2);
-                return {
-                    x: centerX + radius * Math.cos(angle),
-                    y: centerY + radius * Math.sin(angle)
-                };
-            };
-
-            // Draw stack polygons
-            stacks.forEach(s => {
-                const pat = getRotatedPattern(s);
-                const active = pat.reduce((acc, v, i) => v ? [...acc, i] : acc, []);
-                if (active.length > 1) {
+                for (let i = 0; i < subdivisions; i++) {
+                    const angle = (2 * Math.PI * i / subdivisions) - (Math.PI / 2);
+                    const x = centerX + subRadius * Math.cos(angle);
+                    const y = centerY + subRadius * Math.sin(angle);
+                    
                     ctx.beginPath();
-                    const start = getCoords(active[0]);
-                    ctx.moveTo(start.x, start.y);
-                    active.forEach(idx => {
-                        const pt = getCoords(idx);
-                        ctx.lineTo(pt.x, pt.y);
-                    });
-                    ctx.closePath();
-                    ctx.strokeStyle = s.type === 'positive' ? 'rgba(0, 230, 118, 0.6)' : 'rgba(255, 82, 82, 0.6)';
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
+                    ctx.arc(x, y, 2, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#444';
+                    ctx.fill();
                 }
             });
 
-            // Draw Combined Output Vertices
+            const getCoords = (i, radiusOffset = 0) => {
+                const angle = (2 * Math.PI * i / N) - (Math.PI / 2);
+                const r = baseRadius - radiusOffset;
+                return {
+                    x: centerX + r * Math.cos(angle),
+                    y: centerY + r * Math.sin(angle)
+                };
+            };
+
+            stacks.forEach((s, sIdx) => {
+                const pat = getRotatedPattern(s);
+                const active = pat.reduce((acc, v, i) => v ? [...acc, i] : acc, []);
+                const toneInfo = activeChordData[sIdx % activeChordData.length] || { color: '#00e676' };
+                const radOffset = sIdx * 14;
+
+                if (active.length > 1) {
+                    ctx.beginPath();
+                    const start = getCoords(active[0], radOffset);
+                    ctx.moveTo(start.x, start.y);
+                    active.forEach(idx => {
+                        const pt = getCoords(idx, radOffset);
+                        ctx.lineTo(pt.x, pt.y);
+                    });
+                    ctx.closePath();
+
+                    if (s.type === 'positive') {
+                        ctx.strokeStyle = toneInfo.color;
+                        ctx.setLineDash([]);
+                        ctx.lineWidth = 2.5;
+                    } else {
+                        ctx.strokeStyle = '#ff5252';
+                        ctx.setLineDash([5, 5]);
+                        ctx.lineWidth = 1.5;
+                    }
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+            });
+
             if (window.currentAnalysis) {
                 const pat = window.currentAnalysis.pattern;
                 for (let i = 0; i < N; i++) {
-                    const pt = getCoords(i);
+                    const pt = getCoords(i, 0);
                     ctx.beginPath();
                     ctx.arc(pt.x, pt.y, 6, 0, 2 * Math.PI);
-                    ctx.fillStyle = pat[i] ? '#00e676' : '#444';
+                    ctx.fillStyle = pat[i] ? '#00e676' : '#333';
                     ctx.fill();
                 }
 
-                // Plot Center of Mass
-                const cmX = centerX + window.currentAnalysis.centroid[0] * radius;
-                const cmY = centerY - window.currentAnalysis.centroid[1] * radius;
+                const cmX = centerX + window.currentAnalysis.centroid[0] * baseRadius;
+                const cmY = centerY - window.currentAnalysis.centroid[1] * baseRadius;
 
                 ctx.beginPath();
                 ctx.arc(cmX, cmY, 8, 0, 2 * Math.PI);
@@ -509,33 +595,32 @@ HTML_TEMPLATE = """
             } else {
                 isPlaying = true;
                 document.getElementById('play-btn').innerText = 'Stop';
-                globalTick = 0;
 
                 const bpm = parseInt(document.getElementById('bpm-input').value);
                 const N = parseInt(document.getElementById('n-input').value);
-                
-                // Fast master clock tick rate (96 ticks per quarter note)
-                const tickIntervalMs = (60000 / bpm) / 24;
 
+                // Lock tick schedule strictly to real-time clock seconds
                 masterTimer = setInterval(() => {
-                    stacks.forEach(s => {
+                    const nowSec = Math.floor(Date.now() / 1000);
+
+                    stacks.forEach((s, sIdx) => {
                         const pat = getRotatedPattern(s);
-                        const stepDurationTicks = Math.round(24 * s.ratio);
-                        
-                        if (globalTick % stepDurationTicks === 0) {
-                            const stepIdx = Math.floor(globalTick / stepDurationTicks) % N;
-                            if (pat[stepIdx]) {
-                                const baseFreq = (A4_FREQ / 2) * Math.pow(2, stepIdx / N);
-                                playTone(baseFreq, s.type === 'positive');
-                            }
+                        const stepDurationSec = (60 / bpm) / s.ratio;
+                        const currentStep = Math.floor(nowSec / stepDurationSec) % N;
+
+                        if (pat[currentStep] && (nowSec % Math.max(1, Math.floor(stepDurationSec)) === 0)) {
+                            const toneInfo = activeChordData[sIdx % activeChordData.length] || { freq: 220, color: '#00e676' };
+                            playTone(toneInfo.freq, toneInfo.color, s.type === 'positive');
                         }
                     });
-
-                    globalTick++;
-                }, tickIntervalMs);
+                }, 1000);
             }
         }
 
+        // Automatic background sync to the chimes server every 60 seconds
+        syncPollInterval = setInterval(syncChimes, 60000);
+
+        document.getElementById('update-n-btn').addEventListener('click', loadLibrary);
         loadLibrary();
     </script>
 </body>
@@ -543,5 +628,5 @@ HTML_TEMPLATE = """
 """
 
 if __name__ == '__main__':
-    print("Running Milne Balanced Polygons Engine on http://0.0.0.0:5007")
+    print("Running Synesthesia-Linked Milne Engine on http://0.0.0.0:5007")
     app.run(host='0.0.0.0', port=5007, debug=True)
