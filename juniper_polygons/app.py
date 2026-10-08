@@ -7,15 +7,7 @@ import requests
 import websockets
 from flask import Flask, render_template_string, jsonify, request
 
-try:
-    from .polygons import (
-        polygon_engine,
-        generate_rhythm_library,
-        analyze_pattern,
-        note_to_freq_432
-    )
-except ImportError:
-    from polygons import (
+from .polygons import (
         polygon_engine,
         generate_rhythm_library,
         analyze_pattern,
@@ -383,7 +375,17 @@ def start_ws_broadcast():
 
     loop.run_until_complete(main_ws())
 
+#if __name__ == '__main__':
+#    threading.Thread(target=start_ws_broadcast, daemon=True).start()
+#    print("Running Harmonic Polygon Server on http://0.0.0.0:5007")
+#    app.run(host='0.0.0.0', port=5007, debug=True)
+
+import os
+
 if __name__ == '__main__':
-    threading.Thread(target=start_ws_broadcast, daemon=True).start()
+    # Only start the WebSocket server in the child reloader process (or if debug is off)
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
+        threading.Thread(target=start_ws_broadcast, daemon=True).start()
+
     print("Running Harmonic Polygon Server on http://0.0.0.0:5007")
-    app.run(host='0.0.0.0', port=5007, debug=True)
+    app.run(host='0.0.0.0', port=5007, debug=True, use_reloader=False)

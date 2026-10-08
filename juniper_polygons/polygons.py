@@ -1,5 +1,6 @@
 import cmath
 import math
+import random
 import re
 import threading
 import time
@@ -12,9 +13,6 @@ def gcd(a: int, b: int) -> int:
     while b:
         a, b = b, a % b
     return a
-
-def lcm(a: int, b: int) -> int:
-    return (a * b) // gcd(a, b) if a and b else 0
 
 def bjorklund(steps: int, pulses: int) -> list[int]:
     """Generates standard Bjorklund Euclidean rhythm E(pulses, steps)."""
@@ -71,11 +69,33 @@ def analyze_pattern(pattern: list[int], N: int) -> dict:
         "dist_from_origin": round(math.hypot(cx, cy), 5)
     }
 
-def get_canonical_rotation(pattern: list[int]) -> tuple[int, ...]:
-    """Returns the lexicographically smallest rotational shift of a pattern."""
+def get_canonical_dihedral(pattern: list[int]) -> tuple[int, ...]:
+    """Returns lexicographically smallest representation under rotation AND reflection (D_N)."""
     n = len(pattern)
     rotations = [tuple(pattern[i:] + pattern[:i]) for i in range(n)]
-    return min(rotations)
+    rev = pattern[::-1]
+    reflections = [tuple(rev[i:] + rev[:i]) for i in range(n)]
+    return min(rotations + reflections)
+
+def get_full_orbit(pattern: list[int]) -> list[list[int]]:
+    """Generates all unique rotational and reflective realizations of a pattern."""
+    n = len(pattern)
+    rev = pattern[::-1]
+    seen = set()
+    orbit = []
+    
+    for i in range(n):
+        r = tuple(pattern[i:] + pattern[:i])
+        if r not in seen:
+            seen.add(r)
+            orbit.append(list(r))
+            
+        ref = tuple(rev[i:] + rev[:i])
+        if ref not in seen:
+            seen.add(ref)
+            orbit.append(list(ref))
+            
+    return orbit
 
 def circular_distance(pat1: list[int], pat2: list[int]) -> float:
     """Calculates rotational distance and density difference between two patterns."""
@@ -95,30 +115,11 @@ def circular_distance(pat1: list[int], pat2: list[int]) -> float:
     density_penalty = abs(len(idx1) - len(idx2)) * (N / 4.0)
     return dist + density_penalty
 
-def sequence_smooth_path(rhythm_list: list[dict]) -> list[dict]:
-    """Sorts a list of rhythms into a smooth path minimizing circular distance."""
-    if not rhythm_list: return []
-
-    unvisited = rhythm_list[:]
-    path = [unvisited.pop(0)]
-
-    while unvisited:
-        current_pat = path[-1]['pattern']
-        closest_idx = 0
-        min_dist = float('inf')
-
-        for i, candidate in enumerate(unvisited):
-            dist = circular_distance(current_pat, candidate['pattern'])
-            if dist < min_dist:
-                min_dist = dist
-                closest_idx = i
-
-        path.append(unvisited.pop(closest_idx))
-
-    return path
-
 def generate_rhythm_library(N: int) -> dict:
-    """Generates all Euclidean and constructive cyclotomic balanced rhythms for N steps."""
+    """
+    Generates all unique non-trivial balanced patterns for N steps (D_N canonicalized),
+    including cyclotomic basis combinations and Bjorklund rhythms.
+    """
     cyclotomic = []
     bjorklund_rhythms = []
     seen_cyc = set()
@@ -127,7 +128,7 @@ def generate_rhythm_library(N: int) -> dict:
     # 1. Euclidean / Bjorklund Rhythms
     for k in range(1, N):
         pat = bjorklund(N, k)
-        canonical = get_canonical_rotation(pat)
+        canonical = get_canonical_dihedral(pat)
         if canonical not in seen_bjork:
             seen_bjork.add(canonical)
             info = analyze_pattern(list(canonical), N)
@@ -146,11 +147,11 @@ def generate_rhythm_library(N: int) -> dict:
             basis_polygons.append(pat_set)
 
     def build_balanced_combinations(index: int, current_union: frozenset):
-        if len(seen_cyc) > 2000:
+        if len(seen_cyc) > 5000:
             return
 
         if current_union:
-            canonical = get_canonical_rotation([1 if i in current_union else 0 for i in range(N)])
+            canonical = get_canonical_dihedral([1 if i in current_union else 0 for i in range(N)])
             if canonical not in seen_cyc:
                 seen_cyc.add(canonical)
                 canonical_pat = list(canonical)
@@ -165,8 +166,8 @@ def generate_rhythm_library(N: int) -> dict:
     build_balanced_combinations(0, frozenset())
 
     return {
-        "cyclotomic": sequence_smooth_path(cyclotomic),
-        "bjorklund": sequence_smooth_path(bjorklund_rhythms)
+        "cyclotomic": cyclotomic,
+        "bjorklund": bjorklund_rhythms
     }
 
 def is_nontrivial(pattern: list[int]) -> bool:
@@ -200,11 +201,12 @@ def note_to_freq_432(note_str: str) -> float:
 
 class PolygonProgressionEngine:
     """
-    Iterates through all non-trivial balanced polygons (positive and negative).
-    Repeats each valid combination 7 times before stepping to the next pair.
+    Iterates through all valid pairwise combinations of balanced polygons in their
+    full rotational and reflective realizations, traversed in a smooth path.
     """
-    def __init__(self, step_cycles=list(range(3, 33)), repeats_per_combo=7, bpm=60, ws_port=65403):
+    def __init__(self, step_cycles=list(range(8, 21)), repeats_per_combo=7, bpm=60, ws_port=65403, shuffle_n=True):
         self.step_cycles = step_cycles
+        self.shuffle_n = shuffle_n
         self.repeats_per_combo = repeats_per_combo
         self.bpm = bpm
         self.ws_port = ws_port
@@ -221,28 +223,98 @@ class PolygonProgressionEngine:
 
         self._load_combos_for_n(self.step_cycles[self.current_n_idx])
 
-    def _get_balanced_polygons(self, N: int) -> list[dict]:
+    def _get_expanded_balanced_polygons(self, N: int) -> list[dict]:
+        """
+        Gets all canonical shapes for N, then expands each into all its distinct
+        reflection and rotation realizations.
+        """
         lib = generate_rhythm_library(N)
-        all_pats = []
-        seen = set()
+        canonical_pats = []
+        seen_canon = set()
         for group in [lib.get("bjorklund", []), lib.get("cyclotomic", [])]:
             for info in group:
                 pat = info["pattern"]
-                key = tuple(pat)
-                if key not in seen and is_nontrivial(pat):
-                    seen.add(key)
-                    all_pats.append(info)
-        return all_pats
+                canon_key = tuple(get_canonical_dihedral(pat))
+                if canon_key not in seen_canon and is_nontrivial(pat):
+                    seen_canon.add(canon_key)
+                    canonical_pats.append(info)
+
+        expanded_pats = []
+        for info in canonical_pats:
+            orbit = get_full_orbit(info["pattern"])
+            for idx, realization in enumerate(orbit):
+                realization_info = analyze_pattern(realization, N)
+                realization_info["label"] = f"{info['label']} (Var {idx + 1}/{len(orbit)})"
+                expanded_pats.append(realization_info)
+
+        return expanded_pats
+
+#    def _sequence_smooth_pair_path(self, combos: list[dict]) -> list[dict]:
+#        """Sorts pairwise combinations minimizing circular distance across both positive and negative components."""
+#        if not combos: return []
+#
+#        unvisited = combos[:]
+#        path = [unvisited.pop(0)]
+#
+#        while unvisited:
+#            curr_pos = path[-1]["pos"]["pattern"]
+#            curr_neg = path[-1]["neg"]["pattern"]
+#
+#            closest_idx = 0
+#            min_dist = float('inf')
+#
+#            for i, cand in enumerate(unvisited):
+#                d_pos = circular_distance(curr_pos, cand["pos"]["pattern"])
+#                d_neg = circular_distance(curr_neg, cand["neg"]["pattern"])
+#                total_dist = d_pos + d_neg
+#                
+#                if total_dist < min_dist:
+#                    min_dist = total_dist
+#                    closest_idx = i
+#
+#            path.append(unvisited.pop(closest_idx))
+#
+#        return path
+
+    def _sequence_smooth_pair_path(self, combos: list[dict], shuffle_start: bool = True) -> list[dict]:
+        if not combos: return []
+    
+        unvisited = combos[:]
+        # Pick a random starting seed on repeats to generate a distinct smooth trajectory
+        start_idx = random.randrange(len(unvisited)) if shuffle_start else 0
+        path = [unvisited.pop(start_idx)]
+    
+        while unvisited:
+            curr_pos = path[-1]["pos"]["pattern"]
+            curr_neg = path[-1]["neg"]["pattern"]
+    
+            closest_idx = 0
+            min_dist = float('inf')
+    
+            for i, cand in enumerate(unvisited):
+                d_pos = circular_distance(curr_pos, cand["pos"]["pattern"])
+                d_neg = circular_distance(curr_neg, cand["neg"]["pattern"])
+                total_dist = d_pos + d_neg
+    
+                if total_dist < min_dist:
+                    min_dist = total_dist
+                    closest_idx = i
+    
+            path.append(unvisited.pop(closest_idx))
+    
+        return path
 
     def _load_combos_for_n(self, N: int):
-        balanced = self._get_balanced_polygons(N)
+        balanced_expanded = self._get_expanded_balanced_polygons(N)
         combos = []
         
-        for pos_info in balanced:
+        # Pairwise iteration over all rotational and reflective realizations
+        for pos_info in balanced_expanded:
             pos_pat = pos_info["pattern"]
-            for neg_info in balanced:
+            for neg_info in balanced_expanded:
                 neg_pat = neg_info["pattern"]
                 
+                # Bitwise subtraction: Positive MINUS Negative
                 sub_pat = [1 if (p and not q) else 0 for p, q in zip(pos_pat, neg_pat)]
                 
                 if is_nontrivial(sub_pat):
@@ -254,7 +326,8 @@ class PolygonProgressionEngine:
                         "sub_analysis": analyze_pattern(sub_pat, N)
                     })
 
-        self.sequence = combos
+        # Smooth pairwise traversal
+        self.sequence = self._sequence_smooth_pair_path(combos)
         self.combo_idx = 0
         self.current_repeat = 0
         self.step_in_pattern = 0
@@ -262,8 +335,16 @@ class PolygonProgressionEngine:
         if not combos:
             self._advance_n()
 
+#    def _advance_n(self):
+#        self.current_n_idx = (self.current_n_idx + 1) % len(self.step_cycles)
+#        self._load_combos_for_n(self.step_cycles[self.current_n_idx])
     def _advance_n(self):
-        self.current_n_idx = (self.current_n_idx + 1) % len(self.step_cycles)
+        self.current_n_idx += 1
+        if self.current_n_idx >= len(self.step_cycles):
+            self.current_n_idx = 0
+            if self.shuffle_n:
+                random.shuffle(self.step_cycles)  # Reshuffle N order on macro-cycle wrap
+                
         self._load_combos_for_n(self.step_cycles[self.current_n_idx])
 
     def tick(self) -> dict:
@@ -316,5 +397,5 @@ class PolygonProgressionEngine:
 
             return state
 
-# Global engine instance
-polygon_engine = PolygonProgressionEngine(step_cycles=list(range(3, 33)), repeats_per_combo=7, bpm=60)
+# Global engine instance defaulting to 8-20 beats
+polygon_engine = PolygonProgressionEngine(step_cycles=list(range(8, 21)), repeats_per_combo=7, bpm=60)

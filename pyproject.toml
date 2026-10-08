@@ -60,7 +60,6 @@ exclude = [
     "*.h",
     "*.ico",
     "*.html",
-    "*.lc",
 ]
 
 [tool.setuptools_scm]
@@ -70,5 +69,6 @@ write_to = "version.py"
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = ["test_*.py", "*_test.py"]
 addopts = "-v --tb=short"
